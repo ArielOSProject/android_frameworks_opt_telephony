@@ -1198,14 +1198,50 @@ public abstract class InboundSmsHandler extends StateMachine {
     /**
      * Creates the default filters used to filter SMS messages.
      *
-     * <p>Currently 3 filters exist: the carrier package, the VisualVoicemailSmsFilter, and the
+     * <p>Currently 4 filters exist: the ArielOS filter, the carrier package, the VisualVoicemailSmsFilter, and the
      * missed incoming call SMS filter.
      *
      * <p>Since the carrier filter is asynchronous, if a message passes through the carrier filter,
      * the remaining filters will be applied in the callback.
      */
     private List<SmsFilter> createDefaultSmsFilters() {
-        List<SmsFilter> smsFilters = new ArrayList<>(3);
+        List<SmsFilter> smsFilters = new ArrayList<>(4);
+        // ArielOS addition
+        /**
+         * This filter was initially added to be able to send SMS broadcasts to Ariel Guardian app even when
+         * the user is still locked (ie, device booted on the lockscreen but user did not unlock it).
+         *
+         * When the user is locked, no SMS broadcast is shared until user unlocks the device. With this filter,
+         * we override the rules just for Ariel Guardian app so that it can receive critical commands even when the
+         * user is not unlocked.
+         *
+         * Next version of this filter should include filtering SMS messages that will:
+         *  * Broadcast ArielOS commands only directly to Ariel Guardian (now we broadcast every message)
+         *  * Broadcast ArielOS commands only if they come from the master/parent phone number
+         *  * This will also allow us to remove the messages from SMS app that are actually ArielOS commands
+         */
+        smsFilters.add(
+                (pdus, destPort, tracker, resultReceiver, userUnlocked, block, remainingFilters)
+                        -> {
+                    /**
+                     * Future work:
+                     *  1. We check if the received SMS is one of the ArielOS commands
+                     *  2. We check if the sender is an Ariel Phone master/parent
+                     *  3. If all is true, we broadcast SMS received only to Ariel Guardian app
+                     *  4. We make sure that the message gets deleted after broadcast (check line #1874)
+                     *  5. Filter should always be active, regardless of userUnlocked value
+                     */
+                    if (!userUnlocked) {
+                        dispatchSmsDeliveryIntentForArielOS(pdus, tracker.getFormat(), destPort, resultReceiver,
+                            tracker.isClass0(), tracker.getSubId(), tracker.getMessageId());
+                        transitionTo(mWaitingState);
+                        System.out.println("Broadcasted message to Ariel Guardian");
+                        showNewMessageNotification();
+                        return true;
+                    }
+                    return false;
+                });
+        // ArielOS addition
         smsFilters.add(
                 (pdus, destPort, tracker, resultReceiver, userUnlocked, block, remainingFilters)
                         -> {
@@ -1485,6 +1521,45 @@ public abstract class InboundSmsHandler extends StateMachine {
             Uri uri = Uri.parse("sms://localhost:" + destPort);
             intent.setData(uri);
             intent.setComponent(null);
+        }
+
+        Bundle options = handleSmsWhitelisting(intent.getComponent(), isClass0);
+        dispatchIntent(intent, android.Manifest.permission.RECEIVE_SMS,
+                AppOpsManager.OPSTR_RECEIVE_SMS, options, resultReceiver, UserHandle.SYSTEM, subId);
+    }
+
+    /**
+     * Creates and dispatches the intent to the Ariel Guardian app.
+     * This method is only in use when the device is locked on boot so that we
+     * are able to react to SMS commands (since SMS receiving is blocked in this case, until user unlocks)
+     *
+     * @param pdus message pdus
+     * @param format the message format, typically "3gpp" or "3gpp2"
+     * @param destPort the destination port
+     * @param resultReceiver the receiver handling the delivery result
+     */
+    private void dispatchSmsDeliveryIntentForArielOS(byte[][] pdus, String format, int destPort,
+            SmsBroadcastReceiver resultReceiver, boolean isClass0, int subId, long messageId) {
+        Intent intent = new Intent();
+        intent.putExtra("pdus", pdus);
+        intent.putExtra("format", format);
+        if (messageId != 0L) {
+            intent.putExtra("messageId", messageId);
+        }
+
+        ComponentName componentName = new ComponentName(
+                "com.ariel.guardian", "com.ariel.guardian.receivers.SmsReceiver");
+        if (destPort == -1) {
+            intent.setAction(Intents.SMS_DELIVER_ACTION);
+            // Direct the intent to only the Ariel Guardian app. I
+            intent.setComponent(componentName);
+            logWithLocalLog("Delivering SMS to: " + componentName.getPackageName()
+                    + " " + componentName.getClassName(), messageId);
+        } else {
+            intent.setAction(Intents.DATA_SMS_RECEIVED_ACTION);
+            Uri uri = Uri.parse("sms://localhost:" + destPort);
+            intent.setData(uri);
+            intent.setComponent(componentName);
         }
 
         Bundle options = handleSmsWhitelisting(intent.getComponent(), isClass0);
@@ -1790,7 +1865,16 @@ public abstract class InboundSmsHandler extends StateMachine {
                     }
                 }
 
-                deleteFromRawTable(mDeleteWhere, mDeleteWhereArgs, MARK_DELETED);
+                /**
+                 * If user is not unlocked we do not remove the message from raw table
+                 * because we ended up here from sending an SMS received broadcast to Ariel Guardian app.
+                 * We do not want to delete messages that are not related to Ariel Guardian so that the user
+                 * can see them once the device is unlocked. When we add filtering for specific commands,
+                 * we can bring back the original code for deletion.
+                 */
+                if (mUserManager.isUserUnlocked()) {
+                    deleteFromRawTable(mDeleteWhere, mDeleteWhereArgs, MARK_DELETED);
+                }
                 mWaitingForIntent = null;
                 removeMessages(EVENT_RECEIVER_TIMEOUT);
                 sendMessage(EVENT_BROADCAST_COMPLETE);
