@@ -1568,45 +1568,6 @@ public abstract class InboundSmsHandler extends StateMachine {
     }
 
     /**
-     * Creates and dispatches the intent to the Ariel Guardian app.
-     * This method is only in use when the device is locked on boot so that we
-     * are able to react to SMS commands (since SMS receiving is blocked in this case, until user unlocks)
-     *
-     * @param pdus message pdus
-     * @param format the message format, typically "3gpp" or "3gpp2"
-     * @param destPort the destination port
-     * @param resultReceiver the receiver handling the delivery result
-     */
-    private void dispatchSmsDeliveryIntentForArielOS(byte[][] pdus, String format, int destPort,
-            SmsBroadcastReceiver resultReceiver, boolean isClass0, int subId, long messageId) {
-        Intent intent = new Intent();
-        intent.putExtra("pdus", pdus);
-        intent.putExtra("format", format);
-        if (messageId != 0L) {
-            intent.putExtra("messageId", messageId);
-        }
-
-        ComponentName componentName = new ComponentName(
-                "com.ariel.guardian", "com.ariel.guardian.receivers.SmsReceiver");
-        if (destPort == -1) {
-            intent.setAction(Intents.SMS_DELIVER_ACTION);
-            // Direct the intent to only the Ariel Guardian app. I
-            intent.setComponent(componentName);
-            logWithLocalLog("Delivering SMS to: " + componentName.getPackageName()
-                    + " " + componentName.getClassName(), messageId);
-        } else {
-            intent.setAction(Intents.DATA_SMS_RECEIVED_ACTION);
-            Uri uri = Uri.parse("sms://localhost:" + destPort);
-            intent.setData(uri);
-            intent.setComponent(componentName);
-        }
-
-        Bundle options = handleSmsWhitelisting(intent.getComponent(), isClass0);
-        dispatchIntent(intent, android.Manifest.permission.RECEIVE_SMS,
-                AppOpsManager.OPSTR_RECEIVE_SMS, options, resultReceiver, UserHandle.SYSTEM, subId);
-    }
-
-    /**
      * Function to detect and handle duplicate messages. If the received message should replace an
      * existing message in the raw db, this function deletes the existing message. If an existing
      * message takes priority (for eg, existing message has already been broadcast), then this new
