@@ -1237,7 +1237,7 @@ public class RadioResponse extends IRadioResponse.Stub {
      * @param smsc Short Message Service Center address on the device
      */
     public void getSmscAddressResponse(RadioResponseInfo responseInfo, String smsc) {
-        responseString(responseInfo, smsc);
+        responseString(responseInfo, sanitizeSmscAddress(smsc));
     }
 
     /**
@@ -2768,4 +2768,35 @@ public class RadioResponse extends IRadioResponse.Stub {
             mRil.processResponseDone_1_6(rr, info, ret);
         }
     }
+
+    /**
+     * Samsung's RIL returns an uninitialized buffer for GET_SMSC_ADDRESS. The garbage is
+     * handed straight into SEND_SMS as the service centre address, where RILD fails to
+     * parse it ("GetDigitStr(): digit is larger than 9") but submits anyway, and the modem
+     * rejects the message with 0x806F. Returning null makes RILD fall back to its own
+     * default SMSC, which is correct. The value is in AT form: "<sca>",<tosca>
+     */
+    public static String sanitizeSmscAddress(String smsc) {
+        if (smsc == null) return null;
+
+        String s = smsc.trim();
+        int first = s.indexOf('"');
+        int last = s.lastIndexOf('"');
+        String number = (first >= 0 && last > first) ? s.substring(first + 1, last) : s;
+
+        // An empty SCA is legitimate and already means "use the modem default".
+        if (number.isEmpty()) return smsc;
+
+        int digits = 0;
+        for (int i = 0; i < number.length(); i++) {
+            char c = number.charAt(i);
+            if (c >= '0' && c <= '9') {
+                digits++;
+            } else if (c != '+' && c != '-' && c != ' ' && c != '(' && c != ')') {
+                return null;  // not a dial string at all — RIL returned junk
+            }
+        }
+        return digits >= 7 ? smsc : null;
+    }
+
 }

@@ -170,7 +170,8 @@ public class MessagingResponse extends IRadioMessagingResponse.Stub {
      * @param smsc Short Message Service Center address on the device
      */
     public void getSmscAddressResponse(RadioResponseInfo responseInfo, String smsc) {
-        RadioResponse.responseString(HAL_SERVICE_MESSAGING, mRil, responseInfo, smsc);
+        RadioResponse.responseString(HAL_SERVICE_MESSAGING, mRil, responseInfo, 
+                RadioResponse.sanitizeSmscAddress(smsc));
     }
 
     /**
