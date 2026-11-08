@@ -938,7 +938,8 @@ public abstract class InboundSmsHandler extends StateMachine {
             // single-part message
             pdus = new byte[][]{tracker.getPdu()};
             timestamps = new long[]{tracker.getTimestamp()};
-            block = BlockChecker.isBlocked(mContext, tracker.getDisplayAddress(), null);
+            block = BlockChecker.isBlocked(mContext, tracker.getDisplayAddress(),
+                    arielSmsExtras());
         } else {
             // multi-part message
             Cursor cursor = null;
@@ -1014,7 +1015,7 @@ public abstract class InboundSmsHandler extends StateMachine {
                         // could be used for block checking purpose.
                         block = BlockChecker.isBlocked(mContext,
                                 cursor.getString(PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING
-                                        .get(DISPLAY_ADDRESS_COLUMN)), null);
+                                        .get(DISPLAY_ADDRESS_COLUMN)), arielSmsExtras());
                     }
                 }
                 log("processMessagePart: all " + messageCount + " segments "
@@ -1138,6 +1139,17 @@ public abstract class InboundSmsHandler extends StateMachine {
         }
 
         return true;
+    }
+
+    /**
+     * ArielOS: marks the block check as coming from an incoming SMS so BlockedNumberProvider can
+     * apply the Ariel "block unknown SMS" setting. Without a call presentation the AOSP call
+     * rules do not match, so calls and the manual block list behave as before.
+     */
+    private static Bundle arielSmsExtras() {
+        Bundle extras = new Bundle();
+        extras.putBoolean("ariel_is_sms", true);
+        return extras;
     }
 
     /**
